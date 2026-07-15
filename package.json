@@ -1,7 +1,0 @@
-{
-  "name": "banner-proxy",
-  "version": "1.0.0",
-  "scripts": { 
-    "vercel-build": "echo build" 
-  }
-}
