@@ -27,7 +27,6 @@ INFO_API_URL = "https://jaat-info-api.onrender.com/player-info"
 FONT_FILE = "arial_unicode_bold.otf"
 FONT_CHEROKEE = "NotoSansCherokee.ttf"
 
-# Use the same working CDN as in the Flask version
 ICON_CDN_URL = "https://cdn.jsdelivr.net/gh/ShahGCreator/icon@main/PNG/{}.png"
 
 client = httpx.AsyncClient(
@@ -48,7 +47,6 @@ def load_unicode_font(size, font_file=FONT_FILE):
         return ImageFont.load_default()
 
 async def fetch_image_bytes(item_id):
-    """Fetch image from CDN; returns None if invalid ID or not found."""
     if not item_id or str(item_id) == "0" or item_id is None:
         return None
 
@@ -73,10 +71,10 @@ def process_banner_image(data, avatar_bytes, banner_bytes, pin_bytes):
     banner_img = bytes_to_image(banner_bytes)
     pin_img = bytes_to_image(pin_bytes)
 
-    # Correct keys from API response
-    level = str(data.get("level", "Not Found"))
-    name = data.get("nickname", "Not Found")
-    guild = data.get("clanName", "Not Found")
+    # Get data with proper fallbacks
+    level = str(data.get("level", "N/A"))
+    name = data.get("nickname", "Unknown")
+    guild = data.get("clanName", "")  # Empty string if no guild
 
     TARGET_HEIGHT = 400 
     avatar_img = avatar_img.resize((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
@@ -96,7 +94,7 @@ def process_banner_image(data, avatar_bytes, banner_bytes, pin_bytes):
         new_banner_w = int(TARGET_HEIGHT * (b_w / b_h) * 2.0)
         banner_img = banner_img.resize((new_banner_w, TARGET_HEIGHT), Image.LANCZOS)
     else:
-        banner_img = Image.new("RGBA", (800, 400), (50, 50, 50))
+        banner_img = Image.new("RGBA", (800, 400), (50, 50, 50, 0))
 
     final_w = TARGET_HEIGHT + new_banner_w
     final_h = TARGET_HEIGHT
@@ -119,45 +117,61 @@ def process_banner_image(data, avatar_bytes, banner_bytes, pin_bytes):
         code = ord(char)
         return (0x13A0 <= code <= 0x13FF) or (0xAB70 <= code <= 0xABBF)
 
-    def draw_text_with_stroke(x, y, text, font_main, font_fallback, size):
+    def draw_text_with_stroke(x, y, text, font_main, font_fallback, size=3):
+        if not text:
+            return
         current_x = x
         for char in text:
             font = font_fallback if is_cherokee(char) else font_main
             
-            # Draw stroke
+            # Draw stroke (black outline)
             for dx in range(-size, size + 1):
                 for dy in range(-size, size + 1):
-                    draw.text((current_x + dx, y + dy), char, font=font, fill=stroke_col)
+                    if dx != 0 or dy != 0:
+                        draw.text((current_x + dx, y + dy), char, font=font, fill="black")
             
-            # Draw text
-            draw.text((current_x, y), char, font=font, fill=text_col)
+            # Draw main text (white)
+            draw.text((current_x, y), char, font=font, fill="white")
             
-            # Advance cursor
             char_width = font.getlength(char)
             current_x += char_width
 
-    stroke_col, text_col = "black", "white"
+    # Draw Name with stroke
     draw_text_with_stroke(text_x + 25, text_y, name, font_large, font_large_cherokee, 4)
-    draw_text_with_stroke(text_x + 25, text_y + 200, guild, font_small, font_small_cherokee, 3)
+    
+    # Draw Guild only if exists (not empty)
+    if guild and guild != "Not Found" and guild.strip():
+        draw_text_with_stroke(text_x + 25, text_y + 200, guild, font_small, font_small_cherokee, 3)
 
+    # Pin image (title)
     if pin_img and pin_img.size != (100, 100):
         pin_size = 130 
         pin_img = pin_img.resize((pin_size, pin_size), Image.LANCZOS)
         combined.paste(pin_img, (0, TARGET_HEIGHT - pin_size), pin_img)
 
+    # Level text with stroke (no background box)
     level_txt = f"Lvl.{level}"
-    try:
-        bbox = draw.textbbox((0, 0), level_txt, font=font_level)
-        text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    except:
-        text_w, text_h = len(level_txt) * 20, 40
-
-    px, py = 25, 16
-    box_x = final_w - (text_w + px * 2)
-    box_y = final_h - (text_h + py * 2)
     
-    draw.rectangle([box_x, box_y, final_w, final_h], fill="black")
-    draw.text((box_x + px, box_y + py - 6), level_txt, font=font_level, fill="white")
+    # Draw Level with stroke
+    font = font_level
+    try:
+        bbox = draw.textbbox((0, 0), level_txt, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+    except:
+        text_w = len(level_txt) * 20
+        text_h = 40
+    
+    # Position level at bottom right
+    x_pos = final_w - text_w - 30
+    y_pos = final_h - text_h - 20
+    
+    # Draw level with stroke
+    for dx in range(-3, 4):
+        for dy in range(-3, 4):
+            if dx != 0 or dy != 0:
+                draw.text((x_pos + dx, y_pos + dy), level_txt, font=font, fill="black")
+    draw.text((x_pos, y_pos), level_txt, font=font, fill="white")
 
     img_io = io.BytesIO()
     combined.save(img_io, 'PNG')
@@ -185,19 +199,16 @@ async def get_banner(uid: str):
             
         data = resp.json()
         
-        # Correct key mappings
         basic_info = data.get("basicInfo", {})
         if not basic_info:
             raise HTTPException(status_code=404, detail="Player not found")
         
         clan_info = data.get("clanBasicInfo", {})
         
-        # Avatar, Banner, Title (Pin) IDs come from basicInfo
         avatar_id = basic_info.get("headPic")
         banner_id = basic_info.get("bannerId")
         pin_id = basic_info.get("title")
 
-        # Fetch all images – fetch_image_bytes handles None/0 internally
         avatar_task = fetch_image_bytes(avatar_id)
         banner_task = fetch_image_bytes(banner_id)
         pin_task = fetch_image_bytes(pin_id)
@@ -206,14 +217,13 @@ async def get_banner(uid: str):
         avatar_bytes, banner_bytes, pin_bytes = results[0], results[1], results[2]
         
         if pin_bytes is None:
-            pin_bytes = b''  # fallback empty
+            pin_bytes = b''
 
         loop = asyncio.get_event_loop()
-        # Pass correct keys to the processing function
         banner_data = {
-            "level": basic_info.get("level", "Not Found"),
-            "nickname": basic_info.get("nickname", "Not Found"),
-            "clanName": clan_info.get("clanName", "Not Found")
+            "level": basic_info.get("level", "N/A"),
+            "nickname": basic_info.get("nickname", "Unknown"),
+            "clanName": clan_info.get("clanName", "")
         }
         
         img_io = await loop.run_in_executor(
