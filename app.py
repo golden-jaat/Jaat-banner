@@ -1,4 +1,3 @@
-
 import io
 import os
 import asyncio
@@ -28,6 +27,9 @@ INFO_API_URL = "https://jaat-info-api.onrender.com/player-info"
 FONT_FILE = "arial_unicode_bold.otf"
 FONT_CHEROKEE = "NotoSansCherokee.ttf"
 
+# Use the same working CDN as in the Flask version
+ICON_CDN_URL = "https://cdn.jsdelivr.net/gh/ShahGCreator/icon@main/PNG/{}.png"
+
 client = httpx.AsyncClient(
     headers={"User-Agent": "Mozilla/5.0"},
     timeout=10.0,
@@ -46,29 +48,19 @@ def load_unicode_font(size, font_file=FONT_FILE):
         return ImageFont.load_default()
 
 async def fetch_image_bytes(item_id):
+    """Fetch image from CDN using item_id"""
     if not item_id or str(item_id) == "0" or item_id is None:
         return None
 
     item_id = str(item_id)
+    url = ICON_CDN_URL.format(item_id)
     
-    for repo_num in range(1, 7):
-        if repo_num == 1: 
-            batch_start, batch_end = 1, 7
-        else:
-            batch_start = (repo_num - 1) * 6 + 1
-            batch_end = batch_start + 6
-            
-        for batch_num in range(batch_start, batch_end):
-            batch_str = f"{batch_num:02d}"
-            url = f"https://raw.githubusercontent.com/danger738/danger-item-library/main/PNG/{head_pic}.png"
-            
-            try:
-                resp = await client.head(url)
-                if resp.status_code == 200:
-                    img_resp = await client.get(url)
-                    return img_resp.content
-            except:
-                continue
+    try:
+        resp = await client.get(url)
+        if resp.status_code == 200:
+            return resp.content
+    except:
+        pass
     return None
 
 def bytes_to_image(img_bytes):
@@ -81,9 +73,10 @@ def process_banner_image(data, avatar_bytes, banner_bytes, pin_bytes):
     banner_img = bytes_to_image(banner_bytes)
     pin_img = bytes_to_image(pin_bytes)
 
-    level = str(data.get("AccountLevel", "Not Found"))
-    name = data.get("AccountName", "Not Found")
-    guild = data.get("GuildName", "Not Found")
+    # Correct keys from API response
+    level = str(data.get("level", "Not Found"))
+    name = data.get("nickname", "Not Found")
+    guild = data.get("clanName", "Not Found")
 
     TARGET_HEIGHT = 400 
     avatar_img = avatar_img.resize((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
@@ -173,11 +166,11 @@ def process_banner_image(data, avatar_bytes, banner_bytes, pin_bytes):
 
 @app.get("/")
 async def home():
-    return {"message": "Banner API Running",
-           "OWNER": "JAAT",
-           "Your Info Api": INFO_API_URL,
-           "Api Endpoint": "/banner-image?uid={uid}",
-           
+    return {
+        "message": "Banner API Running",
+        "OWNER": "JAAT",
+        "Your Info Api": INFO_API_URL,
+        "Api Endpoint": "/banner-image?uid={uid}",
     }
 
 @app.get("/banner-image")
@@ -187,35 +180,40 @@ async def get_banner(uid: str):
 
     try:
         resp = await client.get(f"{INFO_API_URL}?uid={uid}")
-        
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail="Info API Error")
             
         data = resp.json()
         
-        account_info = data.get("AccountInfo", {})
-        equipped_items = data.get("EquippedSkills", {})
-        profile_info = data.get("AccountInfo", {})
-        guild_info = data.get("GuildInfo", {})
+        # Correct key mappings
+        basic_info = data.get("basicInfo", {})
+        if not basic_info:
+            raise HTTPException(status_code=404, detail="Player not found")
         
-        if not account_info: raise HTTPException(status_code=404, detail="Not Found")
+        clan_info = data.get("clanBasicInfo", {})
         
-        avatar_task = fetch_image_bytes(equipped_items.get("EquippedAvatarId"))
-        banner_task = fetch_image_bytes(equipped_items.get("EquippedBannerId"))
-        
-        pin_id = profile_info.get("Title")
-        pin_task = fetch_image_bytes(pin_id) if (pin_id and str(pin_id) != "0") else asyncio.sleep(0)
+        # Avatar, Banner, Title (Pin) IDs come from basicInfo
+        avatar_id = basic_info.get("headPic")
+        banner_id = basic_info.get("bannerId")
+        pin_id = basic_info.get("title")  # Title is the pin
+
+        # Fetch images concurrently
+        avatar_task = fetch_image_bytes(avatar_id)
+        banner_task = fetch_image_bytes(banner_id)
+        pin_task = fetch_image_bytes(pin_id) if pin_id and str(pin_id) != "0" else asyncio.sleep(0, result=None)
 
         results = await asyncio.gather(avatar_task, banner_task, pin_task)
         avatar_bytes, banner_bytes, pin_bytes = results[0], results[1], results[2]
         
-        if pin_bytes is None: pin_bytes = b''
+        if pin_bytes is None:
+            pin_bytes = b''
 
         loop = asyncio.get_event_loop()
+        # Pass correct keys to the processing function
         banner_data = {
-            "AccountLevel": account_info.get("level", "Not Found"),
-            "AccountName": account_info.get("nicknme", "Not Found"),
-            "GuildName": guild_info.get("clanName", "Not Found")
+            "level": basic_info.get("level", "Not Found"),
+            "nickname": basic_info.get("nickname", "Not Found"),
+            "clanName": clan_info.get("clanName", "Not Found")
         }
         
         img_io = await loop.run_in_executor(
@@ -224,7 +222,11 @@ async def get_banner(uid: str):
             banner_data, avatar_bytes, banner_bytes, pin_bytes
         )
         
-        return Response(content=img_io.getvalue(), media_type="image/png", headers={"Cache-Control": "public, max-age=300"})
+        return Response(
+            content=img_io.getvalue(),
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=300"}
+        )
 
     except Exception as e:
         print(f"Error: {e}")
