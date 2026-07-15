@@ -48,7 +48,7 @@ def load_unicode_font(size, font_file=FONT_FILE):
         return ImageFont.load_default()
 
 async def fetch_image_bytes(item_id):
-    """Fetch image from CDN using item_id"""
+    """Fetch image from CDN; returns None if invalid ID or not found."""
     if not item_id or str(item_id) == "0" or item_id is None:
         return None
 
@@ -195,18 +195,18 @@ async def get_banner(uid: str):
         # Avatar, Banner, Title (Pin) IDs come from basicInfo
         avatar_id = basic_info.get("headPic")
         banner_id = basic_info.get("bannerId")
-        pin_id = basic_info.get("title")  # Title is the pin
+        pin_id = basic_info.get("title")
 
-        # Fetch images concurrently
+        # Fetch all images – fetch_image_bytes handles None/0 internally
         avatar_task = fetch_image_bytes(avatar_id)
         banner_task = fetch_image_bytes(banner_id)
-        pin_task = fetch_image_bytes(pin_id) if pin_id and str(pin_id) != "0" else asyncio.sleep(0, result=None)
+        pin_task = fetch_image_bytes(pin_id)
 
         results = await asyncio.gather(avatar_task, banner_task, pin_task)
         avatar_bytes, banner_bytes, pin_bytes = results[0], results[1], results[2]
         
         if pin_bytes is None:
-            pin_bytes = b''
+            pin_bytes = b''  # fallback empty
 
         loop = asyncio.get_event_loop()
         # Pass correct keys to the processing function
