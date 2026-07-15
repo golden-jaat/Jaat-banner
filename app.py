@@ -76,7 +76,7 @@ def process_banner_image(data, avatar_bytes, banner_bytes, pin_bytes):
     name = data.get("nickname", "Unknown")
     guild = data.get("clanName", "")  # Empty string if no guild
 
-    TARGET_HEIGHT = 400 
+    TARGET_HEIGHT = 405 
     avatar_img = avatar_img.resize((TARGET_HEIGHT, TARGET_HEIGHT), Image.LANCZOS)
     
     b_w, b_h = banner_img.size
@@ -159,12 +159,12 @@ def process_banner_image(data, avatar_bytes, banner_bytes, pin_bytes):
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
     except:
-        text_w = len(level_txt) * 20
-        text_h = 40
+        text_w = len(level_txt) * 30
+        text_h = 50
     
     # Position level at bottom right
-    x_pos = final_w - text_w - 30
-    y_pos = final_h - text_h - 20
+    x_pos = final_w - text_w - 35
+    y_pos = final_h - text_h - 25
     
     # Draw level with stroke
     for dx in range(-3, 4):
@@ -183,7 +183,6 @@ async def home():
     return {
         "message": "Banner API Running",
         "OWNER": "JAAT",
-        "Your Info Api": INFO_API_URL,
         "Api Endpoint": "/banner-image?uid={uid}",
     }
 
